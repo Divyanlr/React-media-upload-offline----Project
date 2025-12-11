@@ -1,0 +1,124 @@
+/* human-friendly color palette, not metallic */
+:root {
+  --bg: #fff8f2;
+  --card: #fff2e6;
+  --primary: #ff6b6b; /* warm coral */
+  --accent: #ffd166; /* soft amber */
+  --muted: #6c757d;
+  --success: #3ac569;
+  --danger: #e63946;
+  --glass: rgba(255, 255, 255, 0.7);
+}
+
+* {
+  box-sizing: border-box;
+  font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: #1b1b1b;
+}
+.app-shell {
+  max-width: 1100px;
+  margin: 32px auto;
+  padding: 20px;
+}
+header h1 {
+  margin: 0;
+  color: var(--primary);
+}
+.subtitle {
+  color: var(--muted);
+  margin-top: 6px;
+}
+.upload-card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+}
+.row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.left {
+  flex: 1;
+}
+.right {
+  width: 340px;
+}
+.dropzone {
+  border: 3px dashed var(--accent);
+  border-radius: 12px;
+  padding: 18px;
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  cursor: pointer;
+}
+.dropzone.dragover {
+  background: rgba(255, 209, 153, 0.15);
+}
+.file-list {
+  margin-top: 14px;
+}
+.file-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--glass);
+  margin-bottom: 8px;
+}
+.thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #f6f6f6;
+}
+.meta {
+  flex: 1;
+}
+.progress-wrap {
+  height: 8px;
+  background: #eee;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.progress-bar {
+  height: 100%;
+  width: 0%;
+}
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.btn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+}
+.btn.primary {
+  background: var(--primary);
+  color: white;
+}
+.btn.ghost {
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.history {
+  margin-top: 14px;
+}
