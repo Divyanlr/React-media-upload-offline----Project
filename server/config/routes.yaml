@@ -1,0 +1,19 @@
+upload_initiate:
+  path: /api/upload/initiate
+  methods: [POST]
+  controller: App\Controller\UploadController::initiate
+
+upload_chunk:
+  path: /api/upload/chunk
+  methods: [POST]
+  controller: App\Controller\UploadController::chunk
+
+upload_finalize:
+  path: /api/upload/finalize
+  methods: [POST]
+  controller: App\Controller\UploadController::finalize
+
+upload_status:
+  path: /api/upload/status
+  methods: [GET]
+  controller: App\Controller\UploadController::status

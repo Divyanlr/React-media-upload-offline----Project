@@ -1,0 +1,25 @@
+# config/services.yaml
+# Clean, valid YAML with autowiring + $projectDir binding
+
+parameters: {}
+
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+    bind:
+      $projectDir: '%kernel.project_dir%'
+
+  App\:
+    resource: '../src/*'
+    exclude: '../src/{DependencyInjection,Entity,Migrations,Tests,Kernel.php}'
+
+  App\Controller\:
+    resource: '../src/Controller'
+    tags: ['controller.service_arguments']
+  
+  # CORS listener to handle preflight and set headers for API responses
+  App\EventListener\CorsListener:
+    tags:
+      - { name: kernel.event_listener, event: kernel.request, method: onKernelRequest, priority: 100 }
+      - { name: kernel.event_listener, event: kernel.response, method: onKernelResponse, priority: 0 }
