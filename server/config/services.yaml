@@ -17,6 +17,10 @@ services:
   App\Controller\:
     resource: '../src/Controller'
     tags: ['controller.service_arguments']
+
+  App\Service\ChunkHandler:
+    arguments:
+      $projectDir: '%kernel.project_dir%'
   
   # CORS listener to handle preflight and set headers for API responses
   App\EventListener\CorsListener:

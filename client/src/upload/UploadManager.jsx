@@ -2,12 +2,16 @@ import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 
-// Let the browser set multipart boundaries
+// API base URL
 axios.defaults.baseURL = "http://127.0.0.1:8000";
 
+// Upload config
 const CHUNK_SIZE = 1 * 1024 * 1024; // 1MB
 const MAX_CONCURRENCY = 3;
 const MAX_RETRIES = 3;
+
+// Delay between chunks so PAUSE/CANCEL can react
+const UPLOAD_DELAY_MS = 1900;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -17,171 +21,236 @@ export default function UploadManager({ files, onComplete }) {
   const [uploads, setUploads] = useState([]);
   const activeCount = useRef(0);
   const cancelTokens = useRef({});
+  const processing = useRef(false);
 
-  // Disable snapshot restore for now to avoid loops
-  useEffect(() => {}, []);
-
-  // Add new selected files
+  // Detect new uploads and add them
   useEffect(() => {
     const newList = files.map((f) => ({
       id: uuidv4(),
-      file: f.file,
-      name: f.name,
-      size: f.size,
-      type: f.type,
-      uploadedBytes: 0,
+      file: f.file ?? f,
+      name: f.name ?? f.file?.name ?? "unknown",
+      size: f.size ?? f.file?.size ?? 0,
+      type: f.type ?? f.file?.type ?? "",
+      uploadId: uuidv4(),
       progress: 0,
       status: "idle",
-      uploadId: uuidv4(),
-      _finalized: false,
+      chunkIndex: 0,
+      totalChunks: Math.max(1, Math.ceil((f.size ?? f.file?.size ?? 0) / CHUNK_SIZE)),
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+      running: false,
     }));
 
-    if (newList.length) {
-      setUploads((prev) => [...prev, ...newList]);
-    }
+    setUploads((prev) => {
+      const map = {};
+      prev.forEach((p) => (map[`${p.name}-${p.size}`] = p));
+
+      const merged = [...prev];
+      newList.forEach((n) => {
+        if (!map[`${n.name}-${n.size}`]) merged.push(n);
+      });
+
+      return merged;
+    });
   }, [files]);
 
+  const uploadsRef = useRef([]);
   useEffect(() => {
-    processQueue();
+    uploadsRef.current = uploads;
+    if (uploads.length > 0) startProcessing();
   }, [uploads]);
 
   function updateUpload(id, patch) {
     setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
   }
 
+  function startProcessing() {
+    if (processing.current) return;
+    processing.current = true;
+    processQueue().finally(() => {
+      processing.current = false;
+    });
+  }
+
   async function processQueue() {
-    while (activeCount.current < MAX_CONCURRENCY) {
-      const next = uploads.find(
+    while (true) {
+      await sleep(20);
+
+      if (activeCount.current >= MAX_CONCURRENCY) {
+        await sleep(50);
+        continue;
+      }
+
+      const candidate = uploadsRef.current.find(
         (u) =>
           (u.status === "idle" || u.status === "uploading") &&
-          !u._finalized &&
-          u.status !== "finalizing" &&
-          u.status !== "done" &&
+          !u.running &&
+          u.status !== "paused" &&
+          u.status !== "finished" &&
+          u.status !== "error" &&
           u.status !== "cancelled"
       );
 
-      if (!next) break;
+      if (!candidate) break;
 
-      activeCount.current += 1;
+      updateUpload(candidate.id, { running: true, status: "uploading" });
+      activeCount.current++;
 
-      (async () => {
-        try {
-          await uploadFile(next);
-        } finally {
-          activeCount.current -= 1;
-          processQueue();
-        }
-      })(next);
+      uploadFile(candidate)
+        .finally(() => {
+          activeCount.current = Math.max(0, activeCount.current - 1);
+          updateUpload(candidate.id, { running: false });
+        });
     }
   }
 
-  async function uploadFile(item) {
-    updateUpload(item.id, { status: "uploading" });
+  async function uploadFile(snapshot) {
+    const getLatest = () => uploadsRef.current.find((x) => x.id === snapshot.id);
+    let item = getLatest();
+    if (!item) return;
 
-    const totalChunks = Math.ceil(item.size / CHUNK_SIZE);
-
-    // INITIALIZE
+    // INITIATE
     try {
       await axios.post("/api/upload/initiate", {
         uploadId: item.uploadId,
         fileName: item.name,
         size: item.size,
         type: item.type,
-        totalChunks,
+        totalChunks: item.totalChunks,
       });
     } catch (err) {
-      updateUpload(item.id, { status: "error", error: "initiate failed" });
+      updateUpload(item.id, { status: "error", error: "initiate failed", running: false });
       return;
     }
 
-    // SEND CHUNKS
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(item.size, start + CHUNK_SIZE);
+    // UPLOAD CHUNKS
+    for (let i = item.chunkIndex; i < item.totalChunks; i++) {
+      let cur = getLatest();
+      if (!cur) return;
 
-      const chunk = item.file.slice(start, end);
+      // Check paused
+      if (cur.status === "paused") {
+        while (true) {
+          await sleep(200);
+          const again = getLatest();
+          if (!again) return;
+          if (again.status === "cancelled") return;
+          if (again.status !== "paused") break;
+        }
+      }
+
+      // Cancel?
+      if (cur.status === "cancelled") return;
+
+      // Ensure real file
+      let realFile = cur.file;
+      if (!realFile?.slice && realFile?.file?.slice) realFile = realFile.file;
+      if (!realFile || typeof realFile.slice !== "function") {
+        updateUpload(cur.id, { status: "error", error: "invalid file object", running: false });
+        return;
+      }
+
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(cur.size, start + CHUNK_SIZE);
+      const chunk = realFile.slice(start, end);
 
       let attempts = 0;
       let success = false;
+      let lastErr = null;
 
       while (!success && attempts <= MAX_RETRIES) {
         try {
           const form = new FormData();
-          form.append("uploadId", item.uploadId);
-          form.append("chunkIndex", i);
-          form.append("totalChunks", totalChunks);
-          form.append("chunk", chunk, `${item.name}.part.${i}`);
+          form.append("uploadId", cur.uploadId);
+          form.append("index", i);
+          form.append("chunk", chunk, cur.name + ".part." + i);
 
           const source = axios.CancelToken.source();
-          cancelTokens.current[item.id + "_" + i] = source;
+          cancelTokens.current[`${cur.id}-${i}`] = source;
 
-          await axios.post("/api/upload/chunk", form, {
+          const resp = await axios.post("/api/upload/chunk", form, {
+            headers: { "Content-Type": "multipart/form-data" },
+            timeout: 30000,
             cancelToken: source.token,
           });
 
-          delete cancelTokens.current[item.id + "_" + i];
+          delete cancelTokens.current[`${cur.id}-${i}`];
 
-          updateUpload(item.id, {
-            uploadedBytes: end,
-            progress: Math.round((end / item.size) * 100),
+          if (resp.data?.error) throw new Error(resp.data.error);
+          success = true;
+
+          const latest = getLatest();
+          const progress = Math.round(((i + 1) / latest.totalChunks) * 100);
+
+          // 🔥 KEY FIX: DO NOT override pause/cancel state
+          let newStatus = latest.status;
+          if (!["paused", "cancelled", "error", "finished"].includes(newStatus)) {
+            newStatus = "uploading";
+          }
+
+          updateUpload(latest.id, {
+            chunkIndex: i + 1,
+            progress,
+            status: newStatus,
           });
 
-          success = true;
+          await sleep(UPLOAD_DELAY_MS);
         } catch (err) {
           attempts++;
-          if (attempts > MAX_RETRIES) {
-            updateUpload(item.id, { status: "error", error: "chunk retry failed" });
+          lastErr = err;
+
+          if (axios.isCancel(err)) {
+            updateUpload(cur.id, { status: "cancelled", running: false });
             return;
           }
-          await sleep(400);
+
+          if (attempts > MAX_RETRIES) {
+            updateUpload(cur.id, { status: "error", error: "chunk failed", running: false });
+            return;
+          }
+
+          await sleep(400 * attempts);
         }
       }
     }
 
     // FINALIZE
-    updateUpload(item.id, { status: "finalizing" });
+    const final = getLatest();
+    if (!final) return;
+
+    updateUpload(final.id, { status: "finalizing" });
 
     try {
       const resp = await axios.post("/api/upload/finalize", {
-        uploadId: item.uploadId,
-        fileName: item.name,
+        uploadId: final.uploadId,
+        fileName: final.name,
       });
 
-      if (resp.data && resp.data.error) {
-        updateUpload(item.id, { status: "error", error: resp.data.error });
+      if (resp.data?.error) {
+        updateUpload(final.id, { status: "error", error: resp.data.error });
         return;
       }
 
-      // SUCCESS
-      updateUpload(item.id, {
-        status: "done",
+      updateUpload(final.id, {
+        status: "finished",
         progress: 100,
         finishedAt: Date.now(),
+        running: false,
       });
 
-      onComplete &&
-        onComplete({
-          fileName: item.name,
-          size: item.size,
-          finishedAt: Date.now(),
-          uploadId: item.uploadId,
-        });
+      onComplete?.({
+        fileName: final.name,
+        size: final.size,
+        uploadId: final.uploadId,
+      });
     } catch (err) {
-      const msg =
-        err?.response?.data?.error ||
-        err?.message ||
-        "finalize failed (server error)";
-      updateUpload(item.id, { status: "error", error: msg });
+      updateUpload(final.id, { status: "error", error: "finalize failed" });
     }
   }
 
   function pause(id) {
     updateUpload(id, { status: "paused" });
-  }
-
-  function resume(id) {
-    updateUpload(id, { status: "idle" });
-    processQueue();
   }
 
   function cancel(id) {
@@ -192,72 +261,37 @@ export default function UploadManager({ files, onComplete }) {
         } catch {}
       }
     });
-
     updateUpload(id, { status: "cancelled" });
   }
 
   const overall =
     uploads.length === 0
       ? 0
-      : Math.round(
-          uploads.reduce((a, b) => a + (b.progress || 0), 0) / uploads.length
-        );
+      : Math.round(uploads.reduce((s, u) => s + (u.progress || 0), 0) / uploads.length);
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <strong>Upload Manager</strong>
-        <small>Overall {overall}%</small>
+    <div className="upload-manager">
+      <div className="header">
+        <div style={{ width: "100%" }}>
+          <div className="overall">Overall {overall}%</div>
+        </div>
       </div>
 
-      <div className="progress-wrap">
-        <div
-          className="progress-bar"
-          style={{ width: `${overall}%`, background: "var(--primary)" }}
-        />
-      </div>
-
-      <button className="btn primary" onClick={() => processQueue()}>
-        Start All
-      </button>
-
-      <div style={{ marginTop: 10 }}>
+      <div className="items">
         {uploads.map((u) => (
-          <div key={u.id} style={{ marginBottom: 10 }}>
-            <div
-              style={{ display: "flex", justifyContent: "space-between" }}
-            >
-              <span>{u.name}</span>
-              <small>
-                {u.progress}% • {u.status}
-              </small>
-            </div>
-
-            <div className="progress-wrap">
-              <div
-                className="progress-bar"
-                style={{ width: `${u.progress}%` }}
-              />
+          <div key={u.id} className="upload-item">
+            <div className="meta">
+              <div>{u.name}</div>
+              <div className="small">{u.progress}% • {u.status}</div>
             </div>
 
             <div className="controls">
-              {u.status !== "done" && u.status !== "cancelled" && (
-                <>
-                  {u.status !== "paused" && (
-                    <button className="btn ghost" onClick={() => pause(u.id)}>
-                      Pause
-                    </button>
-                  )}
-                  {u.status === "paused" && (
-                    <button className="btn ghost" onClick={() => resume(u.id)}>
-                      Resume
-                    </button>
-                  )}
-                  <button className="btn ghost" onClick={() => cancel(u.id)}>
-                    Cancel
-                  </button>
-                </>
-              )}
+              <button onClick={() => pause(u.id)} disabled={u.status === "paused" || u.status === "finished" || u.status === "cancelled"}>
+                Pause
+              </button>
+              <button onClick={() => cancel(u.id)} disabled={u.status === "finished" || u.status === "cancelled"}>
+                Cancel
+              </button>
             </div>
 
             {u.error && (
