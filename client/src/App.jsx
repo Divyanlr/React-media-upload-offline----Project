@@ -6,7 +6,9 @@ export default function App() {
     <div className="app-shell">
       <header>
         <h1>Media File Upload System</h1>
-        <p className="subtitle">Chunked uploads, pause/resume, retry and upload history</p>
+        <p className="subtitle">
+          Chunked uploads, pause/resume, retry and upload history
+        </p>
       </header>
 
       <main>
@@ -14,7 +16,7 @@ export default function App() {
       </main>
 
       <footer>
-        <small>Made with care — use it to test chunked uploads</small>
+        <small>Made with care, use it to test chunked uploads</small>
       </footer>
     </div>
   );

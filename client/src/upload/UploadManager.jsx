@@ -6,12 +6,12 @@ import { v4 as uuidv4 } from "uuid";
 axios.defaults.baseURL = "http://127.0.0.1:8000";
 
 // Upload config
-const CHUNK_SIZE = 1 * 1024 * 1024; 
+const CHUNK_SIZE = 1 * 1024 * 1024;
 const MAX_CONCURRENCY = 3;
 const MAX_RETRIES = 3;
 
 // Delay between chunks so PAUSE/CANCEL can react
-const UPLOAD_DELAY_MS = 1900;
+const UPLOAD_DELAY_MS = 2900;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,7 +36,10 @@ export default function UploadManager({ files, onComplete }) {
       status: "idle",
       pausedByUser: false, // NEW: mark when user explicitly paused
       chunkIndex: 0,
-      totalChunks: Math.max(1, Math.ceil((f.size ?? f.file?.size ?? 0) / CHUNK_SIZE)),
+      totalChunks: Math.max(
+        1,
+        Math.ceil((f.size ?? f.file?.size ?? 0) / CHUNK_SIZE)
+      ),
       error: null,
       startedAt: null,
       finishedAt: null,
@@ -63,7 +66,9 @@ export default function UploadManager({ files, onComplete }) {
   }, [uploads]);
 
   function updateUpload(id, patch) {
-    setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
+    setUploads((prev) =>
+      prev.map((u) => (u.id === id ? { ...u, ...patch } : u))
+    );
   }
 
   function startProcessing() {
@@ -100,16 +105,16 @@ export default function UploadManager({ files, onComplete }) {
       updateUpload(candidate.id, { running: true, status: "uploading" });
       activeCount.current++;
 
-      uploadFile(candidate)
-        .finally(() => {
-          activeCount.current = Math.max(0, activeCount.current - 1);
-          updateUpload(candidate.id, { running: false });
-        });
+      uploadFile(candidate).finally(() => {
+        activeCount.current = Math.max(0, activeCount.current - 1);
+        updateUpload(candidate.id, { running: false });
+      });
     }
   }
 
   async function uploadFile(snapshot) {
-    const getLatest = () => uploadsRef.current.find((x) => x.id === snapshot.id);
+    const getLatest = () =>
+      uploadsRef.current.find((x) => x.id === snapshot.id);
     let item = getLatest();
     if (!item) return;
 
@@ -123,7 +128,11 @@ export default function UploadManager({ files, onComplete }) {
         totalChunks: item.totalChunks,
       });
     } catch (err) {
-      updateUpload(item.id, { status: "error", error: "initiate failed", running: false });
+      updateUpload(item.id, {
+        status: "error",
+        error: "initiate failed",
+        running: false,
+      });
       return;
     }
 
@@ -160,7 +169,11 @@ export default function UploadManager({ files, onComplete }) {
       let realFile = cur.file;
       if (!realFile?.slice && realFile?.file?.slice) realFile = realFile.file;
       if (!realFile || typeof realFile.slice !== "function") {
-        updateUpload(cur.id, { status: "error", error: "invalid file object", running: false });
+        updateUpload(cur.id, {
+          status: "error",
+          error: "invalid file object",
+          running: false,
+        });
         return;
       }
 
@@ -200,7 +213,9 @@ export default function UploadManager({ files, onComplete }) {
           let newStatus = latest.status;
           if (latest.pausedByUser) {
             newStatus = "paused";
-          } else if (!["paused", "cancelled", "error", "finished"].includes(newStatus)) {
+          } else if (
+            !["paused", "cancelled", "error", "finished"].includes(newStatus)
+          ) {
             newStatus = "uploading";
           }
 
@@ -222,7 +237,11 @@ export default function UploadManager({ files, onComplete }) {
           }
 
           if (attempts > MAX_RETRIES) {
-            updateUpload(cur.id, { status: "error", error: "chunk failed", running: false });
+            updateUpload(cur.id, {
+              status: "error",
+              error: "chunk failed",
+              running: false,
+            });
             return;
           }
 
@@ -284,7 +303,7 @@ export default function UploadManager({ files, onComplete }) {
       if (key.startsWith(id)) {
         try {
           cancelTokens.current[key].cancel("user cancelled");
-        } catch { }
+        } catch {}
       }
     });
     updateUpload(id, { status: "cancelled", pausedByUser: false });
@@ -293,13 +312,15 @@ export default function UploadManager({ files, onComplete }) {
   const overall =
     uploads.length === 0
       ? 0
-      : Math.round(uploads.reduce((s, u) => s + (u.progress || 0), 0) / uploads.length);
+      : Math.round(
+          uploads.reduce((s, u) => s + (u.progress || 0), 0) / uploads.length
+        );
 
   return (
     <div className="upload-manager">
       <div className="header">
         <div style={{ width: "100%" }}>
-          <div className="overall">Overall {overall}%</div>
+          <h3 className="overall">Overall {overall}%</h3>
         </div>
       </div>
 
@@ -308,27 +329,39 @@ export default function UploadManager({ files, onComplete }) {
           <div key={u.id} className="upload-item">
             <div className="meta">
               <div>{u.name}</div>
-              <div className="small">{u.progress}% • {u.status}</div>
+              <div className="small">
+                {u.progress}% • {u.status}
+              </div>
             </div>
 
             <div className="controls">
               <button
+                className="btn"
                 onClick={() => pause(u.id)}
-                disabled={u.status === "paused" || u.status === "finished" || u.status === "cancelled"}
+                disabled={
+                  u.status === "paused" ||
+                  u.status === "finished" ||
+                  u.status === "cancelled"
+                }
               >
                 Pause
               </button>
 
               <button
+                className="btn"
                 onClick={() => cancel(u.id)}
                 // enable Cancel while pausedByUser so user can cancel while paused
-                disabled={u.pausedByUser ? false : (u.status === "finished" || u.status === "cancelled")}
+                disabled={
+                  u.pausedByUser
+                    ? false
+                    : u.status === "finished" || u.status === "cancelled"
+                }
               >
                 Cancel
               </button>
 
-
               <button
+                className="btn"
                 onClick={() => resume(u.id)}
                 disabled={!u.pausedByUser}
               >
