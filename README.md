@@ -127,3 +127,9 @@ npm run build
 ```
 
 The optimized static assets will be output to the: `client/dist/` directory.
+
+## System Architecture Overview
+
+![Step 1 - File Initiation](docs/step1.png)
+![Step 1 - File Initiation](docs/step2.png)
+![Step 1 - File Initiation](docs/step3.png)
